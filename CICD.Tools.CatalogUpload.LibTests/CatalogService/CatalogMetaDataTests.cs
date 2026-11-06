@@ -446,6 +446,57 @@
         }
 
         [TestMethod]
+        public async Task ToCatalogZipAsync_VendorMarketAndElementType_ShouldBeIncludedInManifest()
+        {
+            // Arrange
+            var mockFileSystem = new Mock<IFileSystem>();
+            var mockLogger = new Mock<ILogger>();
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.UnderscoredNamingConvention.Instance)
+                .Build();
+
+            var catalogMetaData = new CatalogMetaData
+            {
+                CatalogIdentifier = "catalog-id-1234",
+                Name = "MyConnector",
+                ContentType = "Connector",
+                VendorId = "6dcff8ce-2ce2-4da1-bea6-f1341871ff20",
+                MarketName = "Broadcast",
+                ElementType = "Video Recorder",
+            };
+
+            // Act
+            byte[] result = await catalogMetaData.ToCatalogZipAsync(mockFileSystem.Object, serializer, mockLogger.Object, true);
+
+            // Assert
+            using var zipStream = new MemoryStream(result);
+            using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+            var manifestEntry = zip.GetEntry("manifest.yml");
+            manifestEntry.Should().NotBeNull();
+            if (manifestEntry == null) return;
+
+            string content;
+            using (var reader = new StreamReader(manifestEntry.Open()))
+            {
+                content = await reader.ReadToEndAsync();
+            }
+
+            var deserializer = new DeserializerBuilder()
+                .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.UnderscoredNamingConvention.Instance)
+                .Build();
+            var roundTripped = deserializer.Deserialize<CatalogYaml>(content);
+            roundTripped.VendorId.Should().Be("6dcff8ce-2ce2-4da1-bea6-f1341871ff20", "the Catalog API rejects Connector registrations without a vendor");
+            roundTripped.MarketName.Should().Be("Broadcast");
+            roundTripped.ElementType.Should().Be("Video Recorder");
+
+            var yamlWithoutVendor = serializer.Serialize(new CatalogYaml { Id = "x", Type = "Automation" });
+            yamlWithoutVendor.Should().NotContain("vendor_id", "unset fields must be omitted so manifests of other item types are unchanged");
+            yamlWithoutVendor.Should().NotContain("market_name");
+            yamlWithoutVendor.Should().NotContain("element_type");
+        }
+
+        [TestMethod]
         public void SearchAndApplyCatalogYaml_NoYamlFile_ShouldReturnFalse()
         {
             // Arrange
